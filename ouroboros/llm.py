@@ -58,6 +58,18 @@ def add_usage(total: Dict[str, Any], usage: Dict[str, Any]) -> None:
         total["cost"] = float(total.get("cost") or 0) + float(usage["cost"])
 
 
+
+
+def _strip_cache_from_content(content: Any) -> Any:
+    """Remove cache_control from content blocks."""
+    if isinstance(content, list):
+        return [
+            {k: v for k, v in block.items() if k != "cache_control"}
+            if isinstance(block, dict) else block
+            for block in content
+        ]
+    return content
+
 def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
     """
     Fetch current pricing from OpenRouter API.
