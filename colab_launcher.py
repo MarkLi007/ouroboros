@@ -156,6 +156,7 @@ os.environ["OPENAI_API_KEY"] = str(OPENAI_API_KEY or "")
 os.environ["ANTHROPIC_API_KEY"] = str(ANTHROPIC_API_KEY or "")
 if MINIMAX_API_KEY:
     os.environ["MINIMAX_API_KEY"] = str(MINIMAX_API_KEY)
+    os.environ["MINIMAX_BASE_URL"] = "https://api.minimaxi.com/anthropic"
 os.environ["GITHUB_USER"] = str(GITHUB_USER)
 os.environ["GITHUB_REPO"] = str(GITHUB_REPO)
 os.environ["OUROBOROS_MODEL"] = str(MODEL_MAIN or ("minimax/MiniMax-M2.5" if MINIMAX_API_KEY else "anthropic/claude-sonnet-4.6"))
