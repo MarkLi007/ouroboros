@@ -31,6 +31,13 @@ MINIMAX_MODEL_PREFIX = "minimax/"
 # OpenRouter fallback model when MiniMax fails
 OPENROUTER_FALLBACK_MODEL = "anthropic/claude-sonnet-4.6"
 
+# MiniMax pricing (USD per 1M tokens) — based on MiniMax official pricing
+MINIMAX_PRICING = {
+    "MiniMax-M2.5": (0.15, 0.60),   # input, output
+    "MiniMax-M2": (0.10, 0.40),
+}
+
+
 
 def normalize_reasoning_effort(value: str, default: str = "medium") -> str:
     allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
@@ -359,6 +366,15 @@ class LLMClient:
                 (usage_raw.get("input_tokens") or 0) + (usage_raw.get("output_tokens") or 0)
             ),
         }
+
+        # Calculate cost based on MINIMAX_PRICING
+        pricing = MINIMAX_PRICING.get(model)
+        if pricing:
+            prompt_price, completion_price = pricing
+            prompt_cost = (usage["prompt_tokens"] / 1_000_000) * prompt_price
+            completion_cost = (usage["completion_tokens"] / 1_000_000) * completion_price
+            usage["cost"] = round(prompt_cost + completion_cost, 6)
+            usage["_model"] = f"minimax/{model}"
 
         return out_msg, usage
 
