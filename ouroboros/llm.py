@@ -3,6 +3,9 @@ Ouroboros — LLM client.
 
 The only module that communicates with the LLM API (OpenRouter).
 Contract: chat(), default_model(), available_models(), add_usage().
+
+Additional backend: MiniMax (api.minimaxi.chat) — enabled via MINIMAX_API_KEY env var.
+Use model prefix 'minimax/' to route calls to MiniMax, e.g. 'minimax/MiniMax-M2.5'.
 """
 
 from __future__ import annotations
@@ -15,6 +18,10 @@ from typing import Any, Dict, List, Optional, Tuple
 log = logging.getLogger(__name__)
 
 DEFAULT_LIGHT_MODEL = "google/gemini-3-pro-preview"
+
+# MiniMax backend
+MINIMAX_BASE_URL = "https://api.minimaxi.chat/v1"
+MINIMAX_MODEL_PREFIX = "minimax/"
 
 
 def normalize_reasoning_effort(value: str, default: str = "medium") -> str:
@@ -103,7 +110,11 @@ def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
 
 
 class LLMClient:
-    """OpenRouter API wrapper. All LLM calls go through this class."""
+    """OpenRouter API wrapper. All LLM calls go through this class.
+
+    Secondary backend: MiniMax (api.minimaxi.chat) activated when
+    MINIMAX_API_KEY env var is set. Use model prefix 'minimax/' to route.
+    """
 
     def __init__(
         self,
@@ -113,6 +124,10 @@ class LLMClient:
         self._api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
         self._base_url = base_url
         self._client = None
+
+        # MiniMax backend (lazy init)
+        self._minimax_api_key = os.environ.get("MINIMAX_API_KEY", "")
+        self._minimax_client = None
 
     def _get_client(self):
         if self._client is None:
@@ -126,6 +141,16 @@ class LLMClient:
                 },
             )
         return self._client
+
+    def _get_minimax_client(self):
+        """Lazy-init OpenAI-compatible client pointed at MiniMax endpoint."""
+        if self._minimax_client is None:
+            from openai import OpenAI
+            self._minimax_client = OpenAI(
+                base_url=MINIMAX_BASE_URL,
+                api_key=self._minimax_api_key,
+            )
+        return self._minimax_client
 
     def _fetch_generation_cost(self, generation_id: str) -> Optional[float]:
         """Fetch cost from OpenRouter Generation API as fallback."""
@@ -151,6 +176,40 @@ class LLMClient:
             pass
         return None
 
+    def _chat_minimax(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        max_tokens: int = 16384,
+        tool_choice: str = "auto",
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Send a chat request to MiniMax API (OpenAI-compatible format)."""
+        if not self._minimax_api_key:
+            raise ValueError(
+                "MINIMAX_API_KEY environment variable is not set. "
+                "Please set it to use MiniMax models."
+            )
+
+        client = self._get_minimax_client()
+
+        kwargs: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+        }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = tool_choice
+
+        resp = client.chat.completions.create(**kwargs)
+        resp_dict = resp.model_dump()
+        usage = resp_dict.get("usage") or {}
+        choices = resp_dict.get("choices") or [{}]
+        msg = (choices[0] if choices else {}).get("message") or {}
+
+        return msg, usage
+
     def chat(
         self,
         messages: List[Dict[str, Any]],
@@ -160,7 +219,16 @@ class LLMClient:
         max_tokens: int = 16384,
         tool_choice: str = "auto",
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Single LLM call. Returns: (response_message_dict, usage_dict with cost)."""
+        """Single LLM call. Returns: (response_message_dict, usage_dict with cost).
+
+        Models with 'minimax/' prefix are routed to the MiniMax backend.
+        All other models go through OpenRouter.
+        """
+        # Route minimax/ prefix models to MiniMax backend
+        if model.startswith(MINIMAX_MODEL_PREFIX):
+            real_model = model[len(MINIMAX_MODEL_PREFIX):]
+            return self._chat_minimax(real_model, messages, tools, max_tokens, tool_choice)
+
         client = self._get_client()
         effort = normalize_reasoning_effort(reasoning_effort)
 
@@ -292,4 +360,9 @@ class LLMClient:
             models.append(code)
         if light and light != main and light != code:
             models.append(light)
+        # Add MiniMax model if API key is configured
+        if self._minimax_api_key:
+            minimax_model = "minimax/MiniMax-M2.5"
+            if minimax_model not in models:
+                models.append(minimax_model)
         return models
