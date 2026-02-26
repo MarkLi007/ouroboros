@@ -110,6 +110,16 @@ except Exception as e:
 
 OPENAI_API_KEY = get_secret("OPENAI_API_KEY", default="")
 ANTHROPIC_API_KEY = get_secret("ANTHROPIC_API_KEY", default="")
+# Load MINIMAX_API_KEY from Drive if not already in env/secrets
+_mm_key_path = "/content/drive/MyDrive/Ouroboros/memory/minimax_api_key.txt"
+try:
+    import pathlib as _pl
+    _mm_raw = _pl.Path(_mm_key_path).read_text().strip()
+    if _mm_raw and not os.environ.get("MINIMAX_API_KEY"):
+        os.environ["MINIMAX_API_KEY"] = _mm_raw
+except Exception:
+    pass
+MINIMAX_API_KEY = get_secret("MINIMAX_API_KEY", default="")
 GITHUB_USER = get_cfg("GITHUB_USER", default=None, allow_legacy_secret=True)
 GITHUB_REPO = get_cfg("GITHUB_REPO", default=None, allow_legacy_secret=True)
 assert GITHUB_USER and str(GITHUB_USER).strip(), "GITHUB_USER not set. Add it to your config cell (see README)."
@@ -136,6 +146,8 @@ DIAG_SLOW_CYCLE_SEC = _parse_int_cfg(
 os.environ["OPENROUTER_API_KEY"] = str(OPENROUTER_API_KEY)
 os.environ["OPENAI_API_KEY"] = str(OPENAI_API_KEY or "")
 os.environ["ANTHROPIC_API_KEY"] = str(ANTHROPIC_API_KEY or "")
+if MINIMAX_API_KEY:
+    os.environ["MINIMAX_API_KEY"] = str(MINIMAX_API_KEY)
 os.environ["GITHUB_USER"] = str(GITHUB_USER)
 os.environ["GITHUB_REPO"] = str(GITHUB_REPO)
 os.environ["OUROBOROS_MODEL"] = str(MODEL_MAIN or "anthropic/claude-sonnet-4.6")
