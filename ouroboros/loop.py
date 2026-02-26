@@ -909,6 +909,9 @@ def _call_llm_with_retry(
             return msg, cost
 
         except Exception as e:
+            # Re-raise critical errors that should not be retried
+            if isinstance(e, RuntimeError) and "MINIMAX_RATE_LIMITED" in str(e):
+                raise
             last_error = e
             append_jsonl(drive_logs / "events.jsonl", {
                 "ts": utc_now_iso(), "type": "llm_api_error",

@@ -20,8 +20,8 @@ DEFAULTS: dict = {
     "MINIMAX_API_KEY": "",
     # Primary models
     "OUROBOROS_MODEL": "minimax/MiniMax-M2.5",
-    "OUROBOROS_MODEL_CODE": "anthropic/claude-sonnet-4.6",
-    "OUROBOROS_FALLBACK_MODEL": "anthropic/claude-sonnet-4.6",
+    "OUROBOROS_MODEL_CODE": "minimax/MiniMax-M2.5",
+    "OUROBOROS_FALLBACK_MODEL": "minimax/MiniMax-M2",
 }
 
 
