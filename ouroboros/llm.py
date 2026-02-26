@@ -377,6 +377,8 @@ class LLMClient:
             completion_cost = (usage["completion_tokens"] / 1_000_000) * completion_price
             usage["cost"] = round(prompt_cost + completion_cost, 6)
             usage["_model"] = f"minimax/{lookup_model}"
+        else:
+            log.warning(f"MiniMax pricing not found for model: {lookup_model} (original: {model})")
 
         return out_msg, usage
 
