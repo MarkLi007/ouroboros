@@ -1,37 +1,47 @@
-#!/usr/bin/env python3
 import re
 
-# Read the file
-with open('/content/ouroboros_repo/ouroboros/llm.py', 'r') as f:
+with open('ouroboros/llm.py', 'r') as f:
     content = f.read()
 
-# Fix 1: Add prefix stripping before pricing lookup
-old_pricing = '''        # Calculate cost based on MINIMAX_PRICING
-        pricing = MINIMAX_PRICING.get(model)'''
-
-new_pricing = '''        # Calculate cost based on MINIMAX_PRICING
-        # Strip prefix if present (model could be 'MiniMax-M2.5' or 'minimax/MiniMax-M2.5')
-        model_for_pricing = model[len(MINIMAX_MODEL_PREFIX):] if model.startswith(MINIMAX_MODEL_PREFIX) else model
-        pricing = MINIMAX_PRICING.get(model_for_pricing)'''
-
-if old_pricing in content:
-    content = content.replace(old_pricing, new_pricing)
-    print('Fix 1 applied: prefix stripping for pricing')
+# Check if already has _calc_minimax_cost
+if '_calc_minimax_cost' in content:
+    print('Already has helper method')
 else:
-    print('Fix 1: pattern not found')
+    # Add helper before _chat_minimax
+    old = '    def _chat_minimax('
+    new = '''    def _calc_minimax_cost(self, model: str, usage: dict) -> None:
+        """Calculate cost for MiniMax API usage."""
+        pricing = MINIMAX_PRICING.get(model)
+        if pricing:
+            prompt_price, completion_price = pricing
+            prompt_cost = (usage["prompt_tokens"] / 1_000_000) * prompt_price
+            completion_cost = (usage["completion_tokens"] / 1_000_000) * completion_price
+            usage["cost"] = round(prompt_cost + completion_cost, 6)
+            usage["_model"] = f"minimax/{model}"
 
-# Fix 2: Fix the _model assignment to avoid double prefix
-old_model = '''            usage["_model"] = f"minimax/{model}"'''
-new_model = '''            usage["_model"] = f"minimax/{model_for_pricing}"'''
+    def _chat_minimax('''
+    content = content.replace(old, new)
+    
+    # Replace inline cost calc
+    old_cost = '''        # Calculate cost based on MINIMAX_PRICING
+        pricing = MINIMAX_PRICING.get(model)
+        if pricing:
+            prompt_price, completion_price = pricing
+            prompt_cost = (usage["prompt_tokens"] / 1_000_000) * prompt_price
+            completion_cost = (usage["completion_tokens"] / 1_000_000) * completion_price
+            usage["cost"] = round(prompt_cost + completion_cost, 6)
+            usage["_model"] = f"minimax/{model}"
 
-if old_model in content:
-    content = content.replace(old_model, new_model)
-    print('Fix 2 applied: use model_for_pricing')
-else:
-    print('Fix 2: pattern not found')
+        return out_msg, usage'''
+    
+    new_cost = '''        # Calculate cost
+        self._calc_minimax_cost(model, usage)
 
-# Write back
-with open('/content/ouroboros_repo/ouroboros/llm.py', 'w') as f:
-    f.write(content)
-
-print('Done')
+        return out_msg, usage'''
+    
+    content = content.replace(old_cost, new_cost)
+    
+    with open('ouroboros/llm.py', 'w') as f:
+        f.write(content)
+    
+    print('Done')
