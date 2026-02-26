@@ -129,6 +129,48 @@ def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
         return {}
 
 
+
+
+def _calculate_minimax_cost(prompt_tokens: int, completion_tokens: int, model: str) -> Optional[float]:
+    """Calculate cost for MiniMax API call based on token usage and model pricing.
+    
+    Returns cost in USD, or None if model pricing not found.
+    """
+    lookup_model = model
+    if lookup_model.startswith("minimax/"):
+        lookup_model = lookup_model[len("minimax/"):]
+    
+    pricing = MINIMAX_PRICING.get(lookup_model)
+    if pricing:
+        prompt_price, completion_price = pricing
+        prompt_cost = (prompt_tokens / 1_000_000) * prompt_price
+        completion_cost = (completion_tokens / 1_000_000) * completion_price
+        return round(prompt_cost + completion_cost, 6)
+    return None
+
+
+def _strip_cache_from_content(content: Any) -> Any:
+    """Remove cache_control blocks from message content.
+    
+    MiniMax doesn't support cache_control, so we strip it.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return content
+    
+    result = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "cache_control":
+            continue
+        if isinstance(block, dict):
+            cleaned = {k: v for k, v in block.items() if k != "cache_control"}
+            if cleaned:
+                result.append(cleaned)
+        else:
+            result.append(block)
+    return result if result else None
+
 class LLMClient:
     """LLM client with MiniMax as primary and OpenRouter as fallback.
 
@@ -246,7 +288,7 @@ class LLMClient:
             if role == "assistant" and msg.get("tool_calls"):
                 # Assistant with tool calls → Anthropic tool_use blocks
                 blocks: List[Dict[str, Any]] = []
-                clean_content = self._strip_cache(content)
+                clean_content = _strip_cache_from_content(content)
                 if clean_content:
                     if isinstance(clean_content, str) and clean_content.strip():
                         blocks.append({"type": "text", "text": clean_content})
@@ -269,7 +311,7 @@ class LLMClient:
                 continue
 
             if role in ("user", "assistant"):
-                clean_content = self._strip_cache(content)
+                clean_content = _strip_cache_from_content(content)
                 if isinstance(clean_content, str):
                     anthropic_messages.append({"role": role, "content": clean_content})
                 elif isinstance(clean_content, list):
