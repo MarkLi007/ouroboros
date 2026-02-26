@@ -1,11 +1,14 @@
 """
 Ouroboros — LLM client.
 
-The only module that communicates with the LLM API (OpenRouter).
+Primary backend: MiniMax (api.minimaxi.chat) — enabled via MINIMAX_API_KEY env var.
+Fallback backend: OpenRouter — used when MiniMax is unavailable or fails.
+
 Contract: chat(), default_model(), available_models(), add_usage().
 
-Additional backend: MiniMax (api.minimaxi.chat) — enabled via MINIMAX_API_KEY env var.
-Use model prefix 'minimax/' to route calls to MiniMax, e.g. 'minimax/MiniMax-M2.5'.
+Model routing:
+- 'minimax/' prefix → MiniMax API (with OpenRouter fallback on failure)
+- anything else → OpenRouter directly
 """
 
 from __future__ import annotations
@@ -22,6 +25,9 @@ DEFAULT_LIGHT_MODEL = "google/gemini-3-pro-preview"
 # MiniMax backend
 MINIMAX_BASE_URL = "https://api.minimaxi.chat/v1"
 MINIMAX_MODEL_PREFIX = "minimax/"
+
+# OpenRouter fallback model when MiniMax fails
+OPENROUTER_FALLBACK_MODEL = "anthropic/claude-sonnet-4.6"
 
 
 def normalize_reasoning_effort(value: str, default: str = "medium") -> str:
@@ -110,10 +116,14 @@ def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
 
 
 class LLMClient:
-    """OpenRouter API wrapper. All LLM calls go through this class.
+    """LLM client with MiniMax as primary and OpenRouter as fallback.
 
-    Secondary backend: MiniMax (api.minimaxi.chat) activated when
-    MINIMAX_API_KEY env var is set. Use model prefix 'minimax/' to route.
+    Primary: MiniMax (api.minimaxi.chat) — activated when MINIMAX_API_KEY is set.
+    Fallback: OpenRouter — used when MiniMax is unavailable or fails.
+
+    Model routing:
+    - 'minimax/' prefix → MiniMax (with automatic OpenRouter fallback on error)
+    - anything else → OpenRouter directly
     """
 
     def __init__(
@@ -210,25 +220,16 @@ class LLMClient:
 
         return msg, usage
 
-    def chat(
+    def _chat_openrouter(
         self,
-        messages: List[Dict[str, Any]],
         model: str,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        reasoning_effort: str = "medium",
-        max_tokens: int = 16384,
-        tool_choice: str = "auto",
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        reasoning_effort: str,
+        max_tokens: int,
+        tool_choice: str,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Single LLM call. Returns: (response_message_dict, usage_dict with cost).
-
-        Models with 'minimax/' prefix are routed to the MiniMax backend.
-        All other models go through OpenRouter.
-        """
-        # Route minimax/ prefix models to MiniMax backend
-        if model.startswith(MINIMAX_MODEL_PREFIX):
-            real_model = model[len(MINIMAX_MODEL_PREFIX):]
-            return self._chat_minimax(real_model, messages, tools, max_tokens, tool_choice)
-
+        """Send a chat request to OpenRouter API."""
         client = self._get_client()
         effort = normalize_reasoning_effort(reasoning_effort)
 
@@ -274,8 +275,6 @@ class LLMClient:
                 usage["cached_tokens"] = int(prompt_details["cached_tokens"])
 
         # Extract cache_write_tokens from prompt_tokens_details if available
-        # OpenRouter: "cache_write_tokens"
-        # Native Anthropic: "cache_creation_tokens" or "cache_creation_input_tokens"
         if not usage.get("cache_write_tokens"):
             prompt_details_for_write = usage.get("prompt_tokens_details") or {}
             if isinstance(prompt_details_for_write, dict):
@@ -294,6 +293,39 @@ class LLMClient:
                     usage["cost"] = cost
 
         return msg, usage
+
+    def chat(
+        self,
+        messages: List[Dict[str, Any]],
+        model: str,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        reasoning_effort: str = "medium",
+        max_tokens: int = 16384,
+        tool_choice: str = "auto",
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Single LLM call. Returns: (response_message_dict, usage_dict with cost).
+
+        Routing:
+        - 'minimax/' prefix → MiniMax backend, with automatic OpenRouter fallback on error.
+        - Other models → OpenRouter directly.
+        """
+        # Route minimax/ prefix models to MiniMax backend (with OpenRouter fallback)
+        if model.startswith(MINIMAX_MODEL_PREFIX):
+            real_model = model[len(MINIMAX_MODEL_PREFIX):]
+            try:
+                return self._chat_minimax(real_model, messages, tools, max_tokens, tool_choice)
+            except Exception as e:
+                fallback_model = os.environ.get("OUROBOROS_FALLBACK_MODEL", OPENROUTER_FALLBACK_MODEL)
+                log.warning("MiniMax call failed (%s), falling back to OpenRouter/%s", e, fallback_model)
+                msg, usage = self._chat_openrouter(
+                    fallback_model, messages, tools, reasoning_effort, max_tokens, tool_choice
+                )
+                usage["_fallback"] = True
+                usage["_fallback_reason"] = str(e)
+                return msg, usage
+
+        # OpenRouter path for all other models
+        return self._chat_openrouter(model, messages, tools, reasoning_effort, max_tokens, tool_choice)
 
     def vision_query(
         self,
@@ -318,7 +350,6 @@ class LLMClient:
         Returns:
             (text_response, usage_dict)
         """
-        # Build multipart content
         content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
         for img in images:
             if "url" in img:
@@ -347,12 +378,23 @@ class LLMClient:
         return text, usage
 
     def default_model(self) -> str:
-        """Return the single default model from env. LLM switches via tool if needed."""
-        return os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
+        """Return the default model.
+
+        Priority:
+        1. OUROBOROS_MODEL env var (explicit override)
+        2. minimax/MiniMax-M2.5 if MINIMAX_API_KEY is set
+        3. anthropic/claude-sonnet-4.6 (OpenRouter fallback)
+        """
+        explicit = os.environ.get("OUROBOROS_MODEL", "")
+        if explicit:
+            return explicit
+        if self._minimax_api_key:
+            return "minimax/MiniMax-M2.5"
+        return OPENROUTER_FALLBACK_MODEL
 
     def available_models(self) -> List[str]:
-        """Return list of available models from env (for switch_model tool schema)."""
-        main = os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
+        """Return list of available models (for switch_model tool schema)."""
+        main = self.default_model()
         code = os.environ.get("OUROBOROS_MODEL_CODE", "")
         light = os.environ.get("OUROBOROS_MODEL_LIGHT", "")
         models = [main]
@@ -360,9 +402,12 @@ class LLMClient:
             models.append(code)
         if light and light != main and light != code:
             models.append(light)
-        # Add MiniMax model if API key is configured
+        # Always include MiniMax if key is available
         if self._minimax_api_key:
             minimax_model = "minimax/MiniMax-M2.5"
             if minimax_model not in models:
                 models.append(minimax_model)
+        # Always include OpenRouter fallback
+        if OPENROUTER_FALLBACK_MODEL not in models:
+            models.append(OPENROUTER_FALLBACK_MODEL)
         return models
