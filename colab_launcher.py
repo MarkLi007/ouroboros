@@ -127,7 +127,13 @@ assert GITHUB_REPO and str(GITHUB_REPO).strip(), "GITHUB_REPO not set. Add it to
 MAX_WORKERS = int(get_cfg("OUROBOROS_MAX_WORKERS", default="5", allow_legacy_secret=True) or "5")
 # If OUROBOROS_MODEL is not explicitly configured, use MiniMax M2.5 when key is available
 _model_default = "minimax/MiniMax-M2.5" if MINIMAX_API_KEY else "anthropic/claude-sonnet-4.6"
-MODEL_MAIN = get_cfg("OUROBOROS_MODEL", default=_model_default, allow_legacy_secret=True)
+_model_from_cfg = get_cfg("OUROBOROS_MODEL", default=None, allow_legacy_secret=True)
+# If MiniMax key is available and configured model is the old OpenRouter default, force MiniMax as primary
+_openrouter_defaults = {"anthropic/claude-sonnet-4.6", "anthropic/claude-sonnet-4-5", "anthropic/claude-3-5-sonnet"}
+if MINIMAX_API_KEY and (_model_from_cfg is None or _model_from_cfg in _openrouter_defaults):
+    MODEL_MAIN = "minimax/MiniMax-M2.5"
+else:
+    MODEL_MAIN = _model_from_cfg or _model_default
 MODEL_CODE = get_cfg("OUROBOROS_MODEL_CODE", default="anthropic/claude-sonnet-4.6", allow_legacy_secret=True)
 MODEL_LIGHT = get_cfg("OUROBOROS_MODEL_LIGHT", default=DEFAULT_LIGHT_MODEL, allow_legacy_secret=True)
 
