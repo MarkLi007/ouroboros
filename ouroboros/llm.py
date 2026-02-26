@@ -201,15 +201,7 @@ class LLMClient:
         system_parts: List[str] = []
         anthropic_messages: List[Dict[str, Any]] = []
 
-        def _strip_cache(content: Any) -> Any:
-            """Remove cache_control from content blocks."""
-            if isinstance(content, list):
-                return [
-                    {k: v for k, v in block.items() if k != "cache_control"}
-                    if isinstance(block, dict) else block
-                    for block in content
-                ]
-            return content
+        _strip_cache = _strip_cache_from_content
 
         for msg in messages:
             role = msg.get("role", "")
@@ -242,7 +234,7 @@ class LLMClient:
             if role == "assistant" and msg.get("tool_calls"):
                 # Assistant with tool calls → Anthropic tool_use blocks
                 blocks: List[Dict[str, Any]] = []
-                clean_content = _strip_cache(content)
+                clean_content = self._strip_cache(content)
                 if clean_content:
                     if isinstance(clean_content, str) and clean_content.strip():
                         blocks.append({"type": "text", "text": clean_content})
@@ -265,7 +257,7 @@ class LLMClient:
                 continue
 
             if role in ("user", "assistant"):
-                clean_content = _strip_cache(content)
+                clean_content = self._strip_cache(content)
                 if isinstance(clean_content, str):
                     anthropic_messages.append({"role": role, "content": clean_content})
                 elif isinstance(clean_content, list):
@@ -378,7 +370,7 @@ class LLMClient:
             usage["cost"] = round(prompt_cost + completion_cost, 6)
             usage["_model"] = f"minimax/{lookup_model}"
         else:
-            log.warning(f"MiniMax pricing not found for model: {lookup_model} (original: {model})")
+            log.warning(f"MiniMax pricing lookup failed for model: {lookup_model} (original: {model}). Available pricing keys: {list(MINIMAX_PRICING.keys())}")
 
         return out_msg, usage
 
