@@ -372,6 +372,11 @@ class LLMClient:
 
         resp = _req.post(url, headers=headers, json=payload, timeout=120)
         try:
+            # Check for rate limit first
+            if resp.status_code == 429:
+                self._minimax_rate_limited = True
+                raise RuntimeError("MiniMax API rate limited (429)")
+            
             resp.raise_for_status()
         except Exception as e:
             raise RuntimeError(f"MiniMax API error {resp.status_code}: {resp.text[:500]}") from e
@@ -518,6 +523,12 @@ class LLMClient:
             try:
                 return self._chat_minimax(real_model, messages, tools, max_tokens, tool_choice)
             except Exception as e:
+                # CRITICAL: Do NOT fallback on rate limit - stop everything and alert owner
+                if self._minimax_rate_limited or "rate limited" in str(e).lower():
+                    log.critical("MiniMax is rate limited! Cannot fallback to OpenRouter - stopping to preserve budget.")
+                    raise RuntimeError("MINIMAX_RATE_LIMITED: All tasks stopped. Owner alerted.")
+                
+                # For other errors, fallback to OpenRouter
                 fallback_model = os.environ.get("OUROBOROS_FALLBACK_MODEL", OPENROUTER_FALLBACK_MODEL)
                 log.warning("MiniMax call failed (%s), falling back to OpenRouter/%s", e, fallback_model)
                 msg, usage = self._chat_openrouter(
@@ -533,10 +544,17 @@ class LLMClient:
         self,
         prompt: str,
         images: List[Dict[str, Any]],
-        model: str = "anthropic/claude-sonnet-4.6",
+        model: str = None,  # Use MiniMax if available, otherwise OpenRouter
         max_tokens: int = 1024,
         reasoning_effort: str = "low",
     ) -> Tuple[str, Dict[str, Any]]:
+        # Auto-select model: MiniMax if available, otherwise fallback
+        if model is None:
+            if self._minimax_api_key:
+                model = "MiniMax-M2.5"
+            else:
+                model = "anthropic/claude-sonnet-4.6"
+        
         """
         Send a vision query to an LLM. Lightweight — no tools, no loop.
 
