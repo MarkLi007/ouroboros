@@ -208,6 +208,15 @@ class LLMClient:
             )
         return self._client
 
+
+    def _check_minimax_response(self, resp) -> None:
+        """Check MiniMax response for errors, including rate limits."""
+        if resp.status_code == 429:
+            self._minimax_rate_limited = True
+            _log.critical("[LLM] MiniMax rate limited! Stopping all tasks until manual intervention.")
+            raise RuntimeError("MiniMax API rate limited (429)")
+        resp.raise_for_status()
+
     def _fetch_generation_cost(self, generation_id: str) -> Optional[float]:
         """Fetch cost from OpenRouter Generation API as fallback."""
         try:
@@ -372,12 +381,7 @@ class LLMClient:
 
         resp = _req.post(url, headers=headers, json=payload, timeout=120)
         try:
-            # Check for rate limit first
-            if resp.status_code == 429:
-                self._minimax_rate_limited = True
-                raise RuntimeError("MiniMax API rate limited (429)")
-            
-            resp.raise_for_status()
+            self._check_minimax_response(resp)
         except Exception as e:
             raise RuntimeError(f"MiniMax API error {resp.status_code}: {resp.text[:500]}") from e
 
