@@ -2,6 +2,11 @@
 
 Paste this file contents into the only immutable Colab cell.
 The shim stays tiny and only starts the runtime launcher from repository.
+
+Can also be used on local environments by setting environment variables:
+  OUROBOROS_REPO_DIR: path to clone the repo (default: /content/ouroboros_repo)
+  OUROBOROS_DRIVE_MOUNT: path where Drive is mounted (default: /content/drive)
+  OUROBOROS_BOOT_BRANCH: branch to boot (default: ouroboros)
 """
 
 import os
@@ -10,16 +15,31 @@ import subprocess
 import sys
 from typing import Optional
 
-from google.colab import userdata  # type: ignore
-from google.colab import drive  # type: ignore
+# Path configuration (env vars with Colab defaults)
+_COLAB_DEFAULT_REPO_DIR = "/content/ouroboros_repo"
+_COLAB_DEFAULT_DRIVE_MOUNT = "/content/drive"
+
+REPO_DIR = pathlib.Path(os.environ.get("OUROBOROS_REPO_DIR", _COLAB_DEFAULT_REPO_DIR)).resolve()
+_DRIVE_MOUNT_BASE = pathlib.Path(os.environ.get("OUROBOROS_DRIVE_MOUNT", _COLAB_DEFAULT_DRIVE_MOUNT))
+
+# Only import Colab modules if available (for non-Colab environments)
+try:
+    from google.colab import userdata  # type: ignore
+    from google.colab import drive  # type: ignore
+    _COLAB_AVAILABLE = True
+except ImportError:
+    _COLAB_AVAILABLE = False
+    userdata = None
+    drive = None
 
 
 def get_secret(name: str, required: bool = False) -> Optional[str]:
     v = None
-    try:
-        v = userdata.get(name)
-    except Exception:
-        v = None
+    if userdata is not None:
+        try:
+            v = userdata.get(name)
+        except Exception:
+            v = None
     if v is None or str(v).strip() == "":
         v = os.environ.get(name)
     if required:
@@ -48,6 +68,10 @@ os.environ.setdefault("OUROBOROS_DIAG_HEARTBEAT_SEC", "30")
 os.environ.setdefault("OUROBOROS_DIAG_SLOW_CYCLE_SEC", "20")
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
+# Also set path env vars for the launcher to pick up
+os.environ.setdefault("OUROBOROS_REPO_DIR", str(REPO_DIR))
+os.environ.setdefault("OUROBOROS_DRIVE_MOUNT", str(_DRIVE_MOUNT_BASE))
+
 GITHUB_TOKEN = str(os.environ["GITHUB_TOKEN"])
 GITHUB_USER = os.environ.get("GITHUB_USER", "").strip()
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "").strip()
@@ -55,7 +79,6 @@ assert GITHUB_USER, "GITHUB_USER not set. Add it to your config cell (see README
 assert GITHUB_REPO, "GITHUB_REPO not set. Add it to your config cell (see README)."
 BOOT_BRANCH = str(os.environ.get("OUROBOROS_BOOT_BRANCH", "ouroboros"))
 
-REPO_DIR = pathlib.Path("/content/ouroboros_repo").resolve()
 REMOTE_URL = f"https://{GITHUB_TOKEN}:x-oauth-basic@github.com/{GITHUB_USER}/{GITHUB_REPO}.git"
 
 if not (REPO_DIR / ".git").exists():
@@ -93,11 +116,13 @@ print(
         os.environ.get("OUROBOROS_DIAG_HEARTBEAT_SEC", ""),
     )
 )
-print("[boot] logs: /content/drive/MyDrive/Ouroboros/logs/supervisor.jsonl")
+print(f"[boot] repo: {REPO_DIR}")
+print(f"[boot] logs: {REPO_DIR.parent}/drive/MyDrive/Ouroboros/logs/supervisor.jsonl" if REPO_DIR.name == "ouroboros_repo" else "[boot] logs: see launcher output")
 
 # Mount Drive in notebook process first (interactive auth works here).
-if not pathlib.Path("/content/drive/MyDrive").exists():
-    drive.mount("/content/drive")
+# Only attempt if running in Colab and Drive is available
+if _COLAB_AVAILABLE and not (_DRIVE_MOUNT_BASE / "MyDrive").exists():
+    drive.mount(str(_DRIVE_MOUNT_BASE))
 
 launcher_path = REPO_DIR / "colab_launcher.py"
 assert launcher_path.exists(), f"Missing launcher: {launcher_path}"
