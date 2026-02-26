@@ -368,15 +368,13 @@ class LLMClient:
         }
 
         # Calculate cost based on MINIMAX_PRICING
-        # Defensive: strip prefix if accidentally included
-        lookup_model = model[len(MINIMAX_MODEL_PREFIX):] if model.startswith(MINIMAX_MODEL_PREFIX) else model
-        pricing = MINIMAX_PRICING.get(lookup_model)
+        pricing = MINIMAX_PRICING.get(model)
         if pricing:
             prompt_price, completion_price = pricing
             prompt_cost = (usage["prompt_tokens"] / 1_000_000) * prompt_price
             completion_cost = (usage["completion_tokens"] / 1_000_000) * completion_price
             usage["cost"] = round(prompt_cost + completion_cost, 6)
-            usage["_model"] = f"minimax/{lookup_model}"
+            usage["_model"] = f"minimax/{model}"
 
         return out_msg, usage
 
