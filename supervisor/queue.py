@@ -28,7 +28,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Module-level config (set via init())
 # ---------------------------------------------------------------------------
-DRIVE_ROOT: pathlib.Path = pathlib.Path("/content/drive/MyDrive/Ouroboros")
+_DEFAULT_DRIVE_ROOT = pathlib.Path(os.environ.get("OUROBOROS_DRIVE_ROOT", "/content/drive/MyDrive/Ouroboros"))
+DRIVE_ROOT: pathlib.Path = _DEFAULT_DRIVE_ROOT
 SOFT_TIMEOUT_SEC: int = 600
 HARD_TIMEOUT_SEC: int = 1800
 HEARTBEAT_STALE_SEC: int = 120
